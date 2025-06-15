@@ -4,7 +4,7 @@ from tkinter import filedialog, messagebox, ttk
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.signal import butter, sosfiltfilt, find_peaks
+from scipy.signal import butter, sosfiltfilt, find_peaks, firwin, lfilter
 import re
 
 matplotlib.use("TkAgg")
@@ -15,6 +15,16 @@ matplotlib.use("TkAgg")
 def compute_magnitude(x, y, z):
     xyz = np.vstack((x, y, z)).astype(float)
     return np.linalg.norm(xyz, axis=0)
+
+
+def fir_hamming_filter(data, cutoff_hz=5.0, fs=100.0, numtaps=11):
+    """
+    FIR low-pass filter using a Hamming window, similar to the one in Xu et al. (2022).
+    """
+    nyq = fs / 2.0
+    normalized_cutoff = cutoff_hz / nyq
+    fir_coeff = firwin(numtaps=numtaps, cutoff=normalized_cutoff, window='hamming')
+    return lfilter(fir_coeff, 1.0, data)
 
 
 def butter_filter(data, cutoff, fs, order, kind):
@@ -57,14 +67,14 @@ def kalman_filter(data):
     p = np.zeros(n)
     x_est[0] = data[0]
     p[0] = 1.0
-    Q = 0.01  # process variance
-    R = 1.0  # measurement variance
+    q = 0.01  # process variance
+    r = 1.0  # measurement variance
     for k in range(1, n):
         x_pred = x_est[k - 1]
-        p_pred = p[k - 1] + Q
-        K = p_pred / (p_pred + R)
-        x_est[k] = x_pred + K * (data[k] - x_pred)
-        p[k] = (1 - K) * p_pred
+        p_pred = p[k - 1] + q
+        k = p_pred / (p_pred + r)
+        x_est[k] = x_pred + k * (data[k] - x_pred)
+        p[k] = (1 - k) * p_pred
     return x_est
 
 
@@ -116,13 +126,13 @@ def load_file():
             messagebox.showerror("Error", f"Could not read file:\n{path}\n\n{e}")
 
 
-
 def clear_selected():
     selected_items = tree.selection()
     for item in selected_items:
         tree.delete(item)
         loaded_files.pop(item, None)
         meta.pop(item, None)
+
 
 def clear_all():
     loaded_files.clear()
@@ -169,6 +179,7 @@ def compute_trace(path, start, end):
         tag_parts.append(f"{gender}, {height_str}, {speed} Walking Speed, {position} Position")
     tag = " | ".join(tag_parts)
     mag = compute_magnitude(x, y, z)
+    filtered = mag.copy()
 
     def lab(suffix):
         suffix_map = {
@@ -191,8 +202,8 @@ def compute_trace(path, start, end):
         traces.append((f"{tag} (Y)", y))
         traces.append((f"{tag} (Z)", z))
 
-    #####################################if not var_hide_magnitude.get():
-    filtered = mag.copy()
+    if not var_hide_magnitude.get():
+        filtered = mag.copy()
 
     suffixes = []
 
@@ -226,6 +237,16 @@ def compute_trace(path, start, end):
         order = int(entry_hp_order.get())
         filtered = butter_filter(filtered, hp_cut, FS, order, 'high')
         suffixes.append("HP")
+
+    # FIR Hamming Filter
+    if var_fir.get():
+        try:
+            cutoff = float(entry_fir_cutoff.get())
+            numtaps = int(entry_fir_taps.get())
+            filtered = fir_hamming_filter(filtered, cutoff_hz=cutoff, fs=FS, numtaps=numtaps)
+            suffixes.append(f" FIR({cutoff}Hz,order {numtaps - 1}) ")
+        except ValueError:
+            messagebox.showerror("Invalid input", "FIR filter settings must be numeric.")
 
     # Kalman
     if var_kalman.get():
@@ -272,6 +293,18 @@ def compute_trace(path, start, end):
 
         if suffixes:
             traces = [(lab(label_suffix), filtered)]
+            if var_mark_peaks.get():
+                peak_indices, _ = find_peaks(filtered)
+                x_peaks = peak_indices
+                y_peaks = filtered[peak_indices]
+                traces.append(("__peak__", (x_peaks, y_peaks)))
+
+            if var_mark_valleys.get():
+                valley_indices, _ = find_peaks(-filtered)
+                x_valleys = valley_indices
+                y_valleys = filtered[valley_indices]
+                traces.append(("__valley__", (x_valleys, y_valleys)))
+
             if var_zero_crossing.get():
                 filtered = np.asarray(filtered)
                 signs = np.sign(filtered)
@@ -289,7 +322,6 @@ def compute_trace(path, start, end):
         else:
             traces = [(lab("raw"), mag)]
 
-    ##############################################
     return traces
 
 
@@ -377,8 +409,9 @@ def plot_files(file_paths):
 
     for label, series in filtered_lines:
         if isinstance(series, tuple):
-            if label == "__zero_cross__":
+            if label in ["__zero_cross__", "__peak__", "__valley__"]:
                 plt.plot(series[0], series[1], 'x',
+                         label=None,
                          color=entry_zero_color.get(),
                          markersize=int(entry_zero_size.get()),
                          markeredgewidth=int(entry_zero_edge.get()))
@@ -418,8 +451,8 @@ def compute_stats_from_magnitude(mag, fs=FS):
     stats['RMS Magnitude'] = np.sqrt(np.mean(mag ** 2))
     stats['Peak Count'] = len(peak_values)
     stats['Valley Count'] = len(valley_values)
-    stats['Average Peak Distance'] = np.mean(np.diff(peaks)) if len(peaks) > 1 else "N/A"
-    stats['Average Valley Distance'] = np.mean(np.diff(valleys)) if len(valleys) > 1 else "N/A"
+    stats['Average Peak Distance'] = np.mean(np.diff(peaks)) if len(peaks) > 1 else "N/A"  # type: ignore
+    stats['Average Valley Distance'] = np.mean(np.diff(valleys)) if len(valleys) > 1 else "N/A"  # type: ignore
     stats['Signal Duration (s)'] = len(mag) / fs
     stats['Mean Magnitude'] = np.mean(mag)
     stats['Std Magnitude'] = np.std(mag)
@@ -474,7 +507,8 @@ root = tk.Tk()
 root.title("Acceleration Visualizer")
 root.configure(bg="white")
 
-tk.Label(root, text="Acceleration Visualizer - Data & Filtering", font=("Segoe UI", 14, "bold"), bg="white").pack(pady=(10, 5))
+tk.Label(root, text="Acceleration Visualizer - Data & Filtering", font=("Segoe UI", 14, "bold"), bg="white").pack(
+    pady=(10, 5))
 
 # --------------- Input Range Section ---------------
 frame_range = tk.Frame(root, bg="white")
@@ -509,14 +543,27 @@ var_show_raw = tk.BooleanVar(value=False)
 var_show_components = tk.BooleanVar(value=False)
 var_hide_magnitude = tk.BooleanVar(value=False)
 # --------------- Zero-crossing Marker Options ---------------
-tk.Label(root, text="Zero-Crossing Display Settings", font=("Segoe UI", 10, "bold"), bg="white").pack(pady=(10, 0))
+tk.Label(root, text="Display Add-ons Settings", font=("Segoe UI", 10, "bold"), bg="white").pack(pady=(10, 0))
+
+var_mark_peaks = tk.BooleanVar(value=False)
+var_mark_valleys = tk.BooleanVar(value=False)
+
+frame_peaks_valleys = tk.Frame(root, bg="white")
+frame_peaks_valleys.pack(pady=2)
+
+tk.Checkbutton(frame_peaks_valleys, text="Mark Peaks with 'x'", variable=var_mark_peaks, bg="white").grid(row=0,
+                                                                                                          column=0,
+                                                                                                          padx=10)
+tk.Checkbutton(frame_peaks_valleys, text="Mark Valleys with 'x'", variable=var_mark_valleys, bg="white").grid(row=0,
+                                                                                                              column=1,
+                                                                                                              padx=10)
 
 var_zero_crossing = tk.BooleanVar(value=False)
 tk.Checkbutton(root, text="Mark Zero-crossings with 'x'", variable=var_zero_crossing, bg="white").pack(pady=2)
 frame_zero_x = tk.Frame(root, bg="white")
 frame_zero_x.pack(pady=6)
 
-tk.Label(frame_zero_x, text="Zero-cross Marker Color:", bg="white").grid(row=0, column=0, padx=6)
+tk.Label(frame_zero_x, text="Add-on Marker Color:", bg="white").grid(row=0, column=0, padx=6)
 entry_zero_color = tk.Entry(frame_zero_x, width=10, justify="center")
 entry_zero_color.insert(0, "red")
 entry_zero_color.grid(row=0, column=1)
@@ -552,6 +599,20 @@ tk.Checkbutton(frame_filter, text="Apply Moving Average Filter", variable=var_mo
                                                                                                            column=0,
                                                                                                            sticky="ew",
                                                                                                            pady=2)
+var_fir = tk.BooleanVar(value=False)
+tk.Checkbutton(frame_filter, text="Apply FIR Hamming Filter", variable=var_fir, bg="white").grid(row=7, column=0,
+                                                                                                 sticky="ew", pady=2)
+
+tk.Label(frame_filter, text="Cutoff Hz:", bg="white").grid(row=7, column=1, sticky="ew")
+entry_fir_cutoff = tk.Entry(frame_filter, width=5, justify="center")
+entry_fir_cutoff.insert(0, "5.0")
+entry_fir_cutoff.grid(row=7, column=2)
+
+tk.Label(frame_filter, text="Taps:", bg="white").grid(row=7, column=3, sticky="ew")
+entry_fir_taps = tk.Entry(frame_filter, width=4, justify="center")
+entry_fir_taps.insert(0, "11")
+entry_fir_taps.grid(row=7, column=4)
+
 tk.Label(frame_filter, text="MA Window:", bg="white").grid(row=4, column=1, padx=(10, 2), sticky="e")
 entry_ma_window = tk.Entry(frame_filter, width=4, justify="center")
 entry_ma_window.insert(0, "5")
@@ -566,9 +627,6 @@ tk.Label(netmag_container, text="Window:", bg="white").pack(side="left", padx=(1
 entry_net_window = tk.Entry(netmag_container, width=4, justify="center")
 entry_net_window.insert(0, "5")
 entry_net_window.pack(side="left")
-
-tk.Checkbutton(root, text="Show X/Y/Z components", variable=var_show_components, bg="white").pack(pady=2)
-tk.Checkbutton(root, text="Don't show magnitude", variable=var_hide_magnitude, bg="white").pack(pady=2)
 
 var_minmax = tk.BooleanVar(value=False)
 tk.Checkbutton(frame_filter, text="Apply Min‑Max Scaling", variable=var_minmax, bg="white").grid(row=6, column=0,
@@ -606,6 +664,8 @@ tk.Checkbutton(frame_filter, text="Split LP & HP instead of Band-pass", variable
 tk.Label(root, text="Plot Style Settings", font=("Segoe UI", 10, "bold"), bg="white").pack(pady=(10, 0))
 
 tk.Checkbutton(root, text="Show raw data in plot", variable=var_show_raw, bg="white").pack(pady=4)
+tk.Checkbutton(root, text="Show X/Y/Z components", variable=var_show_components, bg="white").pack(pady=2)
+tk.Checkbutton(root, text="Don't show magnitude", variable=var_hide_magnitude, bg="white").pack(pady=2)
 
 var_show_name = tk.BooleanVar(value=False)
 var_show_stats = tk.BooleanVar(value=True)
