@@ -239,12 +239,18 @@ def compute_trace(path, start, end):
         suffixes.append("HP")
 
     # FIR Hamming Filter
+    fir_trace = None
+
     if var_fir.get():
         try:
             cutoff = float(entry_fir_cutoff.get())
             numtaps = int(entry_fir_taps.get())
-            filtered = fir_hamming_filter(filtered, cutoff_hz=cutoff, fs=FS, numtaps=numtaps)
-            suffixes.append(f" FIR({cutoff}Hz,order {numtaps - 1}) ")
+            fir_result = fir_hamming_filter(mag, cutoff_hz=cutoff, fs=FS, numtaps=numtaps)
+            if var_plot_fir_iir_separately.get():
+                fir_trace = (lab(f"FIR({cutoff}Hz, order {numtaps - 1})"), fir_result)
+            else:
+                filtered = fir_result  # Overwrite if not splitting
+                suffixes.append(f"FIR({cutoff}Hz,order {numtaps - 1})")
         except ValueError:
             messagebox.showerror("Invalid input", "FIR filter settings must be numeric.")
 
@@ -322,6 +328,8 @@ def compute_trace(path, start, end):
         else:
             traces = [(lab("raw"), mag)]
 
+    if fir_trace:
+        traces.append(fir_trace)
     return traces
 
 
@@ -504,14 +512,40 @@ def open_stats_window():
 # ----------------- GUI -----------------
 
 root = tk.Tk()
+
+# === Scrollable Main Form Setup ===
+container = tk.Frame(root)
+container.pack(fill="both", expand=True)
+
+canvas = tk.Canvas(container, bg="white", width=650, height=800, highlightthickness=1)
+canvas.pack(side="left", fill="both", expand=True)
+
+vsb = tk.Scrollbar(container, orient="vertical", command=canvas.yview)
+vsb.pack(side="right", fill="y")
+canvas.configure(yscrollcommand=vsb.set)
+
+scrollable_frame = tk.Frame(canvas, bg="white")
+scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+
+def _on_scrollable_mousewheel(event):
+    canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+
+scrollable_frame.bind("<Enter>", lambda e: root.bind_all("<MouseWheel>", _on_scrollable_mousewheel))
+scrollable_frame.bind("<Leave>", lambda e: root.unbind_all("<MouseWheel>"))
+
+# === End Scrollable Setup ===
 root.title("Acceleration Visualizer")
 root.configure(bg="white")
 
-tk.Label(root, text="Acceleration Visualizer - Data & Filtering", font=("Segoe UI", 14, "bold"), bg="white").pack(
+tk.Label(scrollable_frame, text="Acceleration Visualizer - Data & Filtering", font=("Segoe UI", 14, "bold"),
+         bg="white").pack(
     pady=(10, 5))
 
 # --------------- Input Range Section ---------------
-frame_range = tk.Frame(root, bg="white")
+frame_range = tk.Frame(scrollable_frame, bg="white")
 frame_range.pack(pady=6)
 tk.Label(frame_range, text="Start Index:", bg="white").grid(row=0, column=0, padx=6)
 entry_start = tk.Entry(frame_range, width=8, justify="center")
@@ -535,7 +569,7 @@ chk_read_all = tk.Checkbutton(frame_range, text="Use Full Range", variable=var_r
 chk_read_all.grid(row=0, column=4, padx=10)
 
 # --------------- Filtering Options Section ---------------
-frame_filter = tk.Frame(root, bg="white")
+frame_filter = tk.Frame(scrollable_frame, bg="white")
 frame_filter.pack(pady=6)
 var_lowpass = tk.BooleanVar(value=True)
 var_highpass = tk.BooleanVar(value=False)
@@ -543,12 +577,13 @@ var_show_raw = tk.BooleanVar(value=False)
 var_show_components = tk.BooleanVar(value=False)
 var_hide_magnitude = tk.BooleanVar(value=False)
 # --------------- Zero-crossing Marker Options ---------------
-tk.Label(root, text="Display Add-ons Settings", font=("Segoe UI", 10, "bold"), bg="white").pack(pady=(10, 0))
+tk.Label(scrollable_frame, text="Display Add-ons Settings", font=("Segoe UI", 10, "bold"), bg="white").pack(
+    pady=(10, 0))
 
 var_mark_peaks = tk.BooleanVar(value=False)
 var_mark_valleys = tk.BooleanVar(value=False)
 
-frame_peaks_valleys = tk.Frame(root, bg="white")
+frame_peaks_valleys = tk.Frame(scrollable_frame, bg="white")
 frame_peaks_valleys.pack(pady=2)
 
 tk.Checkbutton(frame_peaks_valleys, text="Mark Peaks with 'x'", variable=var_mark_peaks, bg="white").grid(row=0,
@@ -559,8 +594,9 @@ tk.Checkbutton(frame_peaks_valleys, text="Mark Valleys with 'x'", variable=var_m
                                                                                                               padx=10)
 
 var_zero_crossing = tk.BooleanVar(value=False)
-tk.Checkbutton(root, text="Mark Zero-crossings with 'x'", variable=var_zero_crossing, bg="white").pack(pady=2)
-frame_zero_x = tk.Frame(root, bg="white")
+tk.Checkbutton(scrollable_frame, text="Mark Zero-crossings with 'x'", variable=var_zero_crossing, bg="white").pack(
+    pady=2)
+frame_zero_x = tk.Frame(scrollable_frame, bg="white")
 frame_zero_x.pack(pady=6)
 
 tk.Label(frame_zero_x, text="Add-on Marker Color:", bg="white").grid(row=0, column=0, padx=6)
@@ -660,22 +696,25 @@ tk.Checkbutton(frame_filter, text="Split LP & HP instead of Band-pass", variable
                                                                                                                   columnspan=4,
                                                                                                                   pady=2,
                                                                                                                   sticky="ew")
+var_plot_fir_iir_separately = tk.BooleanVar(value=False)
+tk.Checkbutton(frame_filter, text="Plot FIR and IIR Separately", variable=var_plot_fir_iir_separately, bg="white").grid(
+    row=8, column=0, columnspan=4, sticky="ew", pady=2)
 
-tk.Label(root, text="Plot Style Settings", font=("Segoe UI", 10, "bold"), bg="white").pack(pady=(10, 0))
+tk.Label(scrollable_frame, text="Plot Style Settings", font=("Segoe UI", 10, "bold"), bg="white").pack(pady=(10, 0))
 
-tk.Checkbutton(root, text="Show raw data in plot", variable=var_show_raw, bg="white").pack(pady=4)
-tk.Checkbutton(root, text="Show X/Y/Z components", variable=var_show_components, bg="white").pack(pady=2)
-tk.Checkbutton(root, text="Don't show magnitude", variable=var_hide_magnitude, bg="white").pack(pady=2)
+tk.Checkbutton(scrollable_frame, text="Show raw data in plot", variable=var_show_raw, bg="white").pack(pady=4)
+tk.Checkbutton(scrollable_frame, text="Show X/Y/Z components", variable=var_show_components, bg="white").pack(pady=2)
+tk.Checkbutton(scrollable_frame, text="Don't show magnitude", variable=var_hide_magnitude, bg="white").pack(pady=2)
 
 var_show_name = tk.BooleanVar(value=False)
 var_show_stats = tk.BooleanVar(value=True)
-frame_labels = tk.Frame(root, bg="white")
+frame_labels = tk.Frame(scrollable_frame, bg="white")
 frame_labels.pack(pady=4)
 tk.Checkbutton(frame_labels, text="Show filename in plot", variable=var_show_name, bg="white").grid(row=0, column=0,
                                                                                                     padx=6)
 tk.Checkbutton(frame_labels, text="Show stats in plot", variable=var_show_stats, bg="white").grid(row=0, column=1,
                                                                                                   padx=6)
-frame_options = tk.Frame(root, bg="white")
+frame_options = tk.Frame(scrollable_frame, bg="white")
 frame_options.pack(pady=10)
 
 frame_line_widths = tk.Frame(frame_options, bg="white")
@@ -712,7 +751,7 @@ entry_ylabel.insert(0, "Magnitude (m/s²)")
 entry_ylabel.grid(row=0, column=1, padx=6, pady=2)
 
 # --------------- Action Buttons Section ---------------
-frame_btn = tk.Frame(root, bg="white")
+frame_btn = tk.Frame(scrollable_frame, bg="white")
 frame_btn.pack(pady=10)
 tk.Button(frame_btn, text="Load Files", width=12, command=load_file).grid(row=0, column=0, padx=6)
 tk.Button(frame_btn, text="Plot All", width=12, command=plot_all).grid(row=0, column=1, padx=6)
@@ -722,11 +761,41 @@ tk.Button(frame_btn, text="Clear Selected", width=14, command=clear_selected).gr
 tk.Button(frame_btn, text="Clear All", width=12, command=clear_all).grid(row=0, column=5, padx=6)
 
 # --------------- Loaded Files Table ---------------
-frame_filelist = tk.LabelFrame(root, text="Loaded files", bg="white")
+frame_filelist = tk.LabelFrame(scrollable_frame, text="Loaded files", bg="white")
 frame_filelist.pack(padx=8, pady=10, fill="both", expand=True)
 
 columns = ("Filename", "Gender", "Height", "Leg Length", "Speed", "Position")
 tree = ttk.Treeview(frame_filelist, columns=columns, show="headings", selectmode="extended")
+
+
+# === Click-based Scroll Focus Handling ===
+def _on_scrollable_mousewheel(event):
+    if canvas.winfo_height() < scrollable_frame.winfo_height():
+        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+
+def _on_tree_mousewheel(event):
+    tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+
+def set_tree_scroll_focus(event):
+    root.bind_all("<MouseWheel>", _on_tree_mousewheel)
+
+
+def set_form_scroll_focus(event):
+    root.bind_all("<MouseWheel>", _on_scrollable_mousewheel)
+
+
+tree.bind("<Button-1>", set_tree_scroll_focus)
+scrollable_frame.bind("<Button-1>", set_form_scroll_focus)
+
+
+# === End Click-based Scroll Focus Handling ===
+
+
+tree.bind("<Button-4>", lambda e: tree.yview_scroll(-1, "units"))
+tree.bind("<Button-5>", lambda e: tree.yview_scroll(1, "units"))
+# === End Treeview Mousewheel Support ===
 for col in columns:
     tree.heading(col, text=col)
     tree.column(col, anchor="center", width=100)
@@ -734,6 +803,14 @@ tree.pack(fill="both", expand=True)
 
 scrollbar = ttk.Scrollbar(frame_filelist, orient="vertical", command=tree.yview)
 tree.configure(yscrollcommand=scrollbar.set)
+
+
+def _on_mousewheel(event):
+    tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+
+tree.bind("<Button-4>", lambda e: tree.yview_scroll(-1, "units"))  # Linux scroll up
+tree.bind("<Button-5>", lambda e: tree.yview_scroll(1, "units"))  # L
 scrollbar.pack(side="right", fill="y")
 
 root.mainloop()
