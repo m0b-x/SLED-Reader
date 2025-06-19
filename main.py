@@ -36,7 +36,6 @@ def butter_filter(data, cutoff, fs, order, kind):
     sos = butter(order, normal_cutoff, btype=kind, analog=False, output='sos')
     return sosfiltfilt(sos, data)
 
-
 def minmax_scale(data, target_min=0.0, target_max=1.0):
     data = np.asarray(data)
     min_val = np.min(data)
@@ -158,11 +157,18 @@ def validate_indices():
 def compute_trace(path, start, end):
     with open(path, "r") as f:
         d = json.load(f)
-    x = d["linear_acceleration"]["x"][start:end]
-    y = d["linear_acceleration"]["y"][start:end]
-    z = d["linear_acceleration"]["z"][start:end]
-    if end is None:
-        end = len(x)
+    x_full = d["linear_acceleration"]["x"]
+    y_full = d["linear_acceleration"]["y"]
+    z_full = d["linear_acceleration"]["z"]
+    mag_full = compute_magnitude(x_full, y_full, z_full)
+
+    filtered = mag_full.copy()
+    # Filtering is applied to full signal (mag_full)
+    # Display range is cropped after filtering
+    x = x_full[start:end]
+    y = y_full[start:end]
+    z = z_full[start:end]
+    mag = mag_full[start:end]
     base = path.split("/")[-1].split(".")[0]
     gender = meta.get(path, {}).get("gender", "?").capitalize()
     height = meta.get(path, {}).get("height", "?")
@@ -635,6 +641,7 @@ tk.Checkbutton(frame_filter, text="Apply Moving Average Filter", variable=var_mo
                                                                                                            column=0,
                                                                                                            sticky="ew",
                                                                                                            pady=2)
+
 var_fir = tk.BooleanVar(value=False)
 tk.Checkbutton(frame_filter, text="Apply FIR Hamming Filter", variable=var_fir, bg="white").grid(row=7, column=0,
                                                                                                  sticky="ew", pady=2)
