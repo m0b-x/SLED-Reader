@@ -54,6 +54,8 @@ This app is ideal for:
 Compatible with the **Step Length Estimation Dataset (SLED)** format, including:
 - JSON fields: `linear_acceleration`, `height`, `gender`, `leg_length`, `smartphone_position`
 - Automatic metadata extraction from filenames and file content
+  
+🔗 Official SLED Dataset Repository: [github.com/repositoryadmin/SLERepository](https://github.com/repositoryadmin/SLERepository/tree/master)
 
 ## 🚀 Getting Started
 
@@ -71,7 +73,7 @@ If you have questions, suggestions, or want to collaborate, feel free to reach o
 
 ## 📝 Dataset Acknowledgment
 
-This application builds upon the **SLED benchmark datasets**, created and maintained by [Melanija Vezočnik](mailto:contact.sle.repository@gmail.com) and colleagues at the **University of Ljubljana**.
+This application builds upon the [**SLED benchmark datasets**](https://github.com/repositoryadmin/SLERepository/tree/master), created and maintained by [Melanija Vezočnik](mailto:contact.sle.repository@gmail.com) and colleagues at the **University of Ljubljana**
 
 These datasets enable performance evaluation of inertial sensor-based step length estimation models, offering over 30 hours of labeled gait data across various walking speeds, positions, and conditions.
 
