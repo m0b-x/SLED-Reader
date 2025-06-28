@@ -28,10 +28,10 @@ The app is composed of two views:
 ![normal_copy1](https://github.com/user-attachments/assets/95fb6eda-e70d-47ab-bf31-9107cd51c32e)
 
 ## Screenshots - Graph View
-<img src="https://github.com/user-attachments/assets/c83d22fb-fede-4343-b1ef-ed4a7d217348" width="500" />
-<img src="https://github.com/user-attachments/assets/416bd5b4-7e61-44e3-ac8d-789218e006c1" width="500" />
-<img src="https://github.com/user-attachments/assets/8fc16e75-a508-4ece-9cf3-511ee1833d9e" width="500" />
-<img src="https://github.com/user-attachments/assets/821a6cdd-1b25-4617-8a06-4e83276a6aa4" width="500" />
+<img src="https://github.com/user-attachments/assets/c83d22fb-fede-4343-b1ef-ed4a7d217348" width="800" />
+<img src="https://github.com/user-attachments/assets/416bd5b4-7e61-44e3-ac8d-789218e006c1" width="800" />
+<img src="https://github.com/user-attachments/assets/8fc16e75-a508-4ece-9cf3-511ee1833d9e" width="800" />
+<img src="https://github.com/user-attachments/assets/821a6cdd-1b25-4617-8a06-4e83276a6aa4" width="800" />
 
 
 ## 🧪 Educational Use
