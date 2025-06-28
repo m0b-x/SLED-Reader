@@ -6,6 +6,10 @@
 
 **SLED Reader** is a Python-based desktop application for visualizing, filtering, and analyzing accelerometer data. Designed around the **Step Length Estimation Dataset (SLED)** format, it enables intuitive signal processing experimentation for researchers and students working in inertial sensing, gait analysis, or mobile health.
 
+## Screenshots
+
+![normal_copy1](https://github.com/user-attachments/assets/95fb6eda-e70d-47ab-bf31-9107cd51c32e)
+
 ## 🔧 Features
 
 - Load and preview **SLED-format JSON files**
@@ -84,7 +88,6 @@ Researchers are encouraged to explore and contribute to this open benchmarking e
 > Laboratory for Integration of Information Systems  
 > Faculty of Computer and Information Science  
 > University of Ljubljana, Slovenia
-
 
 ---
 
