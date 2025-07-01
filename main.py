@@ -4,89 +4,30 @@ from tkinter import filedialog, messagebox, ttk
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.signal import butter, sosfiltfilt, find_peaks, firwin, lfilter
+from scipy.signal import find_peaks
 import re
 
-matplotlib.use("TkAgg")
+# ----------------- Imports -----------------
 
+from filtering_utils import (
+    compute_magnitude,
+    fir_hamming_filter,
+    sliding_window_filter,
+    butter_filter,
+    minmax_scale,
+    moving_average_filter,
+    net_magnitude_filter,
+    kalman_filter,
+)
 
-# ----------------- Helper functions -----------------
+from mouse_binds import bind_scroll_events
 
-def compute_magnitude(x, y, z):
-    xyz = np.vstack((x, y, z)).astype(float)
-    return np.linalg.norm(xyz, axis=0)
-
-
-def fir_hamming_filter(data, cutoff_hz=5.0, fs=100.0, numtaps=11):
-    """
-    FIR low-pass filter using a Hamming window, similar to the one in Xu et al. (2022).
-    """
-    nyq = fs / 2.0
-    normalized_cutoff = cutoff_hz / nyq
-    fir_coeff = firwin(numtaps=numtaps, cutoff=normalized_cutoff, window='hamming')
-    return lfilter(fir_coeff, 1.0, data)
-
-
-def butter_filter(data, cutoff, fs, order, kind):
-    nyq = 0.5 * fs
-    if isinstance(cutoff, (list, tuple)):
-        normal_cutoff = [c / nyq for c in cutoff]
-    else:
-        normal_cutoff = cutoff / nyq
-    sos = butter(order, normal_cutoff, btype=kind, analog=False, output='sos')
-    return sosfiltfilt(sos, data)
-
-def minmax_scale(data, target_min=0.0, target_max=1.0):
-    data = np.asarray(data)
-    min_val = np.min(data)
-    max_val = np.max(data)
-    if max_val - min_val == 0:
-        return np.full_like(data, target_min)
-    return (data - min_val) / (max_val - min_val) * (target_max - target_min) + target_min
-
-
-def moving_average_filter(data, window_size):
-    return np.convolve(data, np.ones(window_size) / window_size, mode='same')
-
-
-def net_magnitude_filter(data, window_size):
-    data = np.asarray(data)
-    net_mag = np.zeros_like(data)
-    for i in range(len(data)):
-        if i < window_size:
-            net_mag[i] = data[i]
-        else:
-            net_mag[i] = data[i] - np.mean(data[i - window_size:i])
-    return net_mag
-
-
-def kalman_filter(data):
-    n = len(data)
-    x_est = np.zeros(n)
-    p = np.zeros(n)
-    x_est[0] = data[0]
-    p[0] = 1.0
-    q = 0.01  # process variance
-    r = 1.0  # measurement variance
-    for k in range(1, n):
-        x_pred = x_est[k - 1]
-        p_pred = p[k - 1] + q
-        k = p_pred / (p_pred + r)
-        x_est[k] = x_pred + k * (data[k] - x_pred)
-        p[k] = (1 - k) * p_pred
-    return x_est
-
-
-def create_entry_with_hz(parent, default_value=""):
-    frame = tk.Frame(parent, bg="white")
-    entry = tk.Entry(frame, width=6, justify="center")
-    entry.insert(0, default_value)
-    entry.pack(side="left")
-    tk.Label(frame, text="Hz,", bg="white").pack(side="left", padx=(2, 0))
-    return frame, entry
+from ui_utils import create_expandable_section, create_entry_with_hz
 
 
 # ----------------- Core app logic -----------------
+
+matplotlib.use("TkAgg")
 
 loaded_files = {}
 meta = {}
@@ -275,6 +216,19 @@ def compute_trace(path, start, end):
         except ValueError:
             messagebox.showerror("Invalid input", "Net magnitude window must be an integer > 1.")
 
+    if var_sliding_window.get():
+        try:
+            sw_size = int(entry_sw_window.get())
+            if sw_size > 1:
+                sw_filtered = sliding_window_filter(filtered, window_size=sw_size)
+                if var_plot_sw_separately.get():
+                    traces.append((lab(f"SlidingWin-{sw_size}"), sw_filtered))
+                else:
+                    filtered = sw_filtered
+                    suffixes.append(f"SlidingWin-{sw_size}")
+        except ValueError:
+            messagebox.showerror("Invalid input", "Sliding window size must be an integer > 1.")
+
     # MinMax Scaling
     if var_minmax.get():
         try:
@@ -302,9 +256,9 @@ def compute_trace(path, start, end):
         if suffixes:
             traces.append((lab(label_suffix), filtered))
     else:
-
         if suffixes:
-            traces = [(lab(label_suffix), filtered)]
+            traces.append((lab(label_suffix), filtered))
+
             if var_mark_peaks.get():
                 peak_indices, _ = find_peaks(filtered)
                 x_peaks = peak_indices
@@ -331,8 +285,12 @@ def compute_trace(path, start, end):
                         x_cross.append(x_zero)
                         y_cross.append(0)
                 traces.append(("__zero_cross__", (x_cross, y_cross)))
+
         else:
-            traces = [(lab("raw"), mag)]
+            if var_show_raw.get() or (
+                    not var_hide_magnitude.get() and not var_show_components.get()
+            ):
+                traces.append((lab("raw"), mag))
 
     if fir_trace:
         traces.append(fir_trace)
@@ -535,23 +493,17 @@ scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=can
 canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
 
 
-def _on_scrollable_mousewheel(event):
-    canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-
-scrollable_frame.bind("<Enter>", lambda e: root.bind_all("<MouseWheel>", _on_scrollable_mousewheel))
-scrollable_frame.bind("<Leave>", lambda e: root.unbind_all("<MouseWheel>"))
-
 # === End Scrollable Setup ===
 root.title("Acceleration Visualizer")
 root.configure(bg="white")
 
-tk.Label(scrollable_frame, text="Acceleration Visualizer - Data & Filtering", font=("Segoe UI", 14, "bold"),
-         bg="white").pack(
-    pady=(10, 5))
+frame_data_filter, content_data_filter = create_expandable_section(scrollable_frame, "Acceleration Visualizer - Data & Filtering", big=True)
+
+frame_data_filter.pack(fill="x", pady=(10, 5))
+
 
 # --------------- Input Range Section ---------------
-frame_range = tk.Frame(scrollable_frame, bg="white")
+frame_range = tk.Frame(content_data_filter, bg="white")
 frame_range.pack(pady=6)
 tk.Label(frame_range, text="Start Index:", bg="white").grid(row=0, column=0, padx=6)
 entry_start = tk.Entry(frame_range, width=8, justify="center")
@@ -575,7 +527,7 @@ chk_read_all = tk.Checkbutton(frame_range, text="Use Full Range", variable=var_r
 chk_read_all.grid(row=0, column=4, padx=10)
 
 # --------------- Filtering Options Section ---------------
-frame_filter = tk.Frame(scrollable_frame, bg="white")
+frame_filter = tk.Frame(content_data_filter, bg="white")
 frame_filter.pack(pady=6)
 var_lowpass = tk.BooleanVar(value=True)
 var_highpass = tk.BooleanVar(value=False)
@@ -583,13 +535,19 @@ var_show_raw = tk.BooleanVar(value=False)
 var_show_components = tk.BooleanVar(value=False)
 var_hide_magnitude = tk.BooleanVar(value=False)
 # --------------- Zero-crossing Marker Options ---------------
-tk.Label(scrollable_frame, text="Display Add-ons Settings", font=("Segoe UI", 10, "bold"), bg="white").pack(
-    pady=(10, 0))
+frame_addons, content_addons = create_expandable_section(
+    scrollable_frame,
+    "Display Add-ons Settings",
+    big=True
+)
+
+frame_addons.pack(fill="x", pady=(10, 5))
+
 
 var_mark_peaks = tk.BooleanVar(value=False)
 var_mark_valleys = tk.BooleanVar(value=False)
 
-frame_peaks_valleys = tk.Frame(scrollable_frame, bg="white")
+frame_peaks_valleys = tk.Frame(content_addons, bg="white")
 frame_peaks_valleys.pack(pady=2)
 
 tk.Checkbutton(frame_peaks_valleys, text="Mark Peaks with 'x'", variable=var_mark_peaks, bg="white").grid(row=0,
@@ -600,9 +558,9 @@ tk.Checkbutton(frame_peaks_valleys, text="Mark Valleys with 'x'", variable=var_m
                                                                                                               padx=10)
 
 var_zero_crossing = tk.BooleanVar(value=False)
-tk.Checkbutton(scrollable_frame, text="Mark Zero-crossings with 'x'", variable=var_zero_crossing, bg="white").pack(
+tk.Checkbutton(content_addons, text="Mark Zero-crossings with 'x'", variable=var_zero_crossing, bg="white").pack(
     pady=2)
-frame_zero_x = tk.Frame(scrollable_frame, bg="white")
+frame_zero_x = tk.Frame(content_addons, bg="white")
 frame_zero_x.pack(pady=6)
 
 tk.Label(frame_zero_x, text="Add-on Marker Color:", bg="white").grid(row=0, column=0, padx=6)
@@ -653,13 +611,25 @@ entry_fir_cutoff.grid(row=7, column=2)
 
 tk.Label(frame_filter, text="Taps:", bg="white").grid(row=7, column=3, sticky="ew")
 entry_fir_taps = tk.Entry(frame_filter, width=4, justify="center")
-entry_fir_taps.insert(0, "11")
+entry_fir_taps.insert(0, "21")
 entry_fir_taps.grid(row=7, column=4)
 
 tk.Label(frame_filter, text="MA Window:", bg="white").grid(row=4, column=1, padx=(10, 2), sticky="e")
 entry_ma_window = tk.Entry(frame_filter, width=4, justify="center")
 entry_ma_window.insert(0, "5")
 entry_ma_window.grid(row=4, column=2, sticky="ew")
+
+
+
+var_sliding_window = tk.BooleanVar(value=False)
+
+tk.Checkbutton(frame_filter, text="Apply Sliding Window Filter", variable=var_sliding_window,
+               bg="white").grid(row=9, column=0, sticky="w", pady=2)
+
+tk.Label(frame_filter, text="Window Size:", bg="white").grid(row=9, column=1, sticky="e")
+entry_sw_window = tk.Entry(frame_filter, width=5, justify="center")
+entry_sw_window.insert(0, "30")  # default from study
+entry_sw_window.grid(row=9, column=2, sticky="w", padx=(0, 4))
 
 var_net_mag = tk.BooleanVar(value=False)
 
@@ -670,6 +640,11 @@ tk.Label(netmag_container, text="Window:", bg="white").pack(side="left", padx=(1
 entry_net_window = tk.Entry(netmag_container, width=4, justify="center")
 entry_net_window.insert(0, "5")
 entry_net_window.pack(side="left")
+
+var_plot_sw_separately = tk.BooleanVar(value=False)
+
+tk.Checkbutton(frame_filter, text="Plot Sliding Window Separately", variable=var_plot_sw_separately,
+               bg="white").grid(row=10, column=0, columnspan=3, sticky="w")
 
 var_minmax = tk.BooleanVar(value=False)
 tk.Checkbutton(frame_filter, text="Apply Min‑Max Scaling", variable=var_minmax, bg="white").grid(row=6, column=0,
@@ -707,21 +682,27 @@ var_plot_fir_iir_separately = tk.BooleanVar(value=False)
 tk.Checkbutton(frame_filter, text="Plot FIR and IIR Separately", variable=var_plot_fir_iir_separately, bg="white").grid(
     row=8, column=0, columnspan=4, sticky="ew", pady=2)
 
-tk.Label(scrollable_frame, text="Plot Style Settings", font=("Segoe UI", 10, "bold"), bg="white").pack(pady=(10, 0))
+frame_plot_style, content_plot_style = create_expandable_section(
+    scrollable_frame,
+    "Plot Style Settings",
+    big=True          # ← add this
+)
 
-tk.Checkbutton(scrollable_frame, text="Show raw data in plot", variable=var_show_raw, bg="white").pack(pady=4)
-tk.Checkbutton(scrollable_frame, text="Show X/Y/Z components", variable=var_show_components, bg="white").pack(pady=2)
-tk.Checkbutton(scrollable_frame, text="Don't show magnitude", variable=var_hide_magnitude, bg="white").pack(pady=2)
+frame_plot_style.pack(fill="x", pady=(10, 5))
+
+tk.Checkbutton(content_plot_style, text="Show raw data in plot", variable=var_show_raw, bg="white").pack(pady=4)
+tk.Checkbutton(content_plot_style, text="Show X/Y/Z components", variable=var_show_components, bg="white").pack(pady=2)
+tk.Checkbutton(content_plot_style, text="Don't show magnitude", variable=var_hide_magnitude, bg="white").pack(pady=2)
 
 var_show_name = tk.BooleanVar(value=False)
 var_show_stats = tk.BooleanVar(value=True)
-frame_labels = tk.Frame(scrollable_frame, bg="white")
+frame_labels = tk.Frame(content_plot_style, bg="white")
 frame_labels.pack(pady=4)
 tk.Checkbutton(frame_labels, text="Show filename in plot", variable=var_show_name, bg="white").grid(row=0, column=0,
                                                                                                     padx=6)
 tk.Checkbutton(frame_labels, text="Show stats in plot", variable=var_show_stats, bg="white").grid(row=0, column=1,
                                                                                                   padx=6)
-frame_options = tk.Frame(scrollable_frame, bg="white")
+frame_options = tk.Frame(content_plot_style, bg="white")
 frame_options.pack(pady=10)
 
 frame_line_widths = tk.Frame(frame_options, bg="white")
@@ -768,41 +749,20 @@ tk.Button(frame_btn, text="Clear Selected", width=14, command=clear_selected).gr
 tk.Button(frame_btn, text="Clear All", width=12, command=clear_all).grid(row=0, column=5, padx=6)
 
 # --------------- Loaded Files Table ---------------
-frame_filelist = tk.LabelFrame(scrollable_frame, text="Loaded files", bg="white")
+frame_filelist = tk.LabelFrame(
+    scrollable_frame,
+    text="Loaded files",
+    bg="white",
+    bd=0,
+    relief="flat",
+    labelanchor="nw"
+)
 frame_filelist.pack(padx=8, pady=10, fill="both", expand=True)
 
 columns = ("Filename", "Gender", "Height", "Leg Length", "Speed", "Position")
 tree = ttk.Treeview(frame_filelist, columns=columns, show="headings", selectmode="extended")
 
 
-# === Click-based Scroll Focus Handling ===
-def _on_scrollable_mousewheel(event):
-    if canvas.winfo_height() < scrollable_frame.winfo_height():
-        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-
-def _on_tree_mousewheel(event):
-    tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-
-def set_tree_scroll_focus(event):
-    root.bind_all("<MouseWheel>", _on_tree_mousewheel)
-
-
-def set_form_scroll_focus(event):
-    root.bind_all("<MouseWheel>", _on_scrollable_mousewheel)
-
-
-tree.bind("<Button-1>", set_tree_scroll_focus)
-scrollable_frame.bind("<Button-1>", set_form_scroll_focus)
-
-
-# === End Click-based Scroll Focus Handling ===
-
-
-tree.bind("<Button-4>", lambda e: tree.yview_scroll(-1, "units"))
-tree.bind("<Button-5>", lambda e: tree.yview_scroll(1, "units"))
-# === End Treeview Mousewheel Support ===
 for col in columns:
     tree.heading(col, text=col)
     tree.column(col, anchor="center", width=100)
@@ -810,14 +770,8 @@ tree.pack(fill="both", expand=True)
 
 scrollbar = ttk.Scrollbar(frame_filelist, orient="vertical", command=tree.yview)
 tree.configure(yscrollcommand=scrollbar.set)
-
-
-def _on_mousewheel(event):
-    tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-
-tree.bind("<Button-4>", lambda e: tree.yview_scroll(-1, "units"))  # Linux scroll up
-tree.bind("<Button-5>", lambda e: tree.yview_scroll(1, "units"))  # L
 scrollbar.pack(side="right", fill="y")
+
+bind_scroll_events(canvas, scrollable_frame, tree_widget=tree)
 
 root.mainloop()
