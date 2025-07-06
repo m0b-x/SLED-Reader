@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import find_peaks
 import re
+from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 
 # ----------------- Imports -----------------
 
@@ -353,7 +354,8 @@ def plot_files(file_paths):
         messagebox.showerror("Error", "Line thickness must be numeric.")
         return
     start, end = idx
-    plt.figure(figsize=(10, 5))
+    fig = plt.figure(figsize=(10, 5))
+    plt.clf()
     raw_lines = []
     filtered_lines = []
     for path in file_paths:
@@ -430,6 +432,102 @@ def compute_stats_from_magnitude(mag, fs=FS):
     stats['Std Magnitude'] = np.std(mag)
     return stats
 
+def compute_fft(data, fs=FS):
+    data = np.asarray(data)
+    n = len(data)
+    freqs = np.fft.rfftfreq(n, d=1/fs)
+    fft_vals = np.fft.rfft(data)
+    magnitude = np.abs(fft_vals) / n
+    return freqs, magnitude
+
+
+
+def _open_fft_window_for_files(file_paths):
+    start, end = validate_indices()
+    if (start, end) == (None, None):
+        return
+
+    fft_win = tk.Toplevel()
+    fft_win.title("FFT of Filtered Signals")
+    fft_win.geometry("900x600")
+
+    fig, ax = plt.subplots(figsize=(10, 5), dpi=100)
+
+    max_mag_seen = 0
+    min_freq = float("inf")
+    max_freq = 0
+    plotted_any = False
+
+    for path in file_paths:
+        try:
+            traces = compute_trace(path, start, end)
+            for label, series in traces:
+                if isinstance(series, (list, np.ndarray)) and not label.startswith("__"):
+                    freqs, mags = compute_fft(series, fs=FS)
+                    if len(freqs) > 0 and len(mags) > 0:
+                        min_freq = min(min_freq, np.min(freqs))
+                        max_freq = max(max_freq, np.max(freqs))
+                        max_mag_seen = max(max_mag_seen, np.max(mags))
+                        ax.plot(freqs, mags, label=label)
+                        plotted_any = True
+                        max_mag_seen = max(max_mag_seen, np.max(mags))
+                    plotted_any = True
+        except Exception as e:
+            messagebox.showerror("FFT Error", f"Error computing FFT for {loaded_files.get(path)}:\n{e}")
+
+    if plotted_any:
+        ax.set_title("Frequency Spectrum (FFT)", fontsize=14)
+        ax.set_xlabel("Frequency (Hz)", fontsize=12)
+        ax.set_ylabel("Magnitude", fontsize=12)
+
+        freq_padding = (max_freq - min_freq) * 0.05
+
+        SIGNAL_THRESHOLD = 0.01 * max_mag_seen
+        freq_cutoff = 0
+
+        for f, m in zip(freqs, mags):
+            if m >= SIGNAL_THRESHOLD:
+                freq_cutoff = f
+
+        freq_padding = freq_cutoff * 0.1
+        ax.set_xlim(0, freq_cutoff + freq_padding)
+
+        ax.set_ylim(0, max(max_mag_seen * 1.1, 1e-2))
+
+        ax.grid(True, linestyle="--", alpha=0.6)
+        ax.set_facecolor("#f9f9f9")
+        ax.legend(fontsize=9)
+        fig.tight_layout()
+    else:
+        ax.set_title("No FFT Data Available", fontsize=14)
+        ax.text(0.5, 0.5, "No valid data to compute FFT.",
+                ha='center', va='center', transform=ax.transAxes)
+        ax.axis('off')
+
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    canvas = FigureCanvasTkAgg(fig, master=fft_win)
+    canvas.draw()
+    canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+    toolbar = NavigationToolbar2Tk(canvas, fft_win)
+    toolbar.update()
+    toolbar.pack(side=tk.BOTTOM, fill=tk.X)
+
+    plt.close(fig)
+
+def open_fft_window_selected():
+    selected = tree.selection()
+    if not selected:
+        messagebox.showinfo("No selection", "Please select one or more files from the list.")
+        return
+    _open_fft_window_for_files(selected)
+
+def open_fft_window_all():
+    if not loaded_files:
+        messagebox.showinfo("No data", "Please load at least one file first.")
+        return
+    _open_fft_window_for_files(loaded_files.keys())
 
 def open_stats_window():
     if not loaded_files:
@@ -515,7 +613,6 @@ entry_end.insert(0, "800")
 entry_end.grid(row=0, column=3)
 
 var_read_all = tk.BooleanVar(value=False)
-
 
 def toggle_read_all():
     entry_start.config(state="disabled" if var_read_all.get() else "normal")
@@ -741,12 +838,17 @@ entry_ylabel.grid(row=0, column=1, padx=6, pady=2)
 # --------------- Action Buttons Section ---------------
 frame_btn = tk.Frame(scrollable_frame, bg="white")
 frame_btn.pack(pady=10)
+
 tk.Button(frame_btn, text="Load Files", width=12, command=load_file).grid(row=0, column=0, padx=6)
 tk.Button(frame_btn, text="Plot All", width=12, command=plot_all).grid(row=0, column=1, padx=6)
 tk.Button(frame_btn, text="Plot Selected", width=14, command=plot_selected).grid(row=0, column=2, padx=6)
 tk.Button(frame_btn, text="Compute Stats", width=14, command=open_stats_window).grid(row=0, column=3, padx=6)
 tk.Button(frame_btn, text="Clear Selected", width=14, command=clear_selected).grid(row=0, column=4, padx=6)
 tk.Button(frame_btn, text="Clear All", width=12, command=clear_all).grid(row=0, column=5, padx=6)
+
+tk.Button(frame_btn, text="FFT Selected", width=14, command=open_fft_window_selected).grid(row=1, column=2, padx=8, pady=4)
+tk.Button(frame_btn, text="FFT All", width=14, command=open_fft_window_all).grid(row=1, column=3, padx=8, pady=4)
+
 
 # --------------- Loaded Files Table ---------------
 frame_filelist = tk.LabelFrame(
@@ -766,11 +868,14 @@ tree = ttk.Treeview(frame_filelist, columns=columns, show="headings", selectmode
 for col in columns:
     tree.heading(col, text=col)
     tree.column(col, anchor="center", width=100)
-tree.pack(fill="both", expand=True)
 
-scrollbar = ttk.Scrollbar(frame_filelist, orient="vertical", command=tree.yview)
-tree.configure(yscrollcommand=scrollbar.set)
-scrollbar.pack(side="right", fill="y")
+
+frame_filelist.grid_rowconfigure(0, weight=1)
+frame_filelist.grid_columnconfigure(0, weight=1)
+
+tree.grid(row=0, column=0, sticky="nsew")
+
+
 
 bind_scroll_events(canvas, scrollable_frame, tree_widget=tree)
 
